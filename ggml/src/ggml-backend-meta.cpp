@@ -1209,13 +1209,18 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor_impl(ggml_backend_m
             t_ij->data = (char *) ggml_backend_buffer_get_base(simple_buf)
                 + size_t(tensor->data) - size_t(ggml_backend_buffer_get_base(tensor->buffer));
         }
-        t_ij->extra = tensor->extra;
         for (int i = 0; i < GGML_MAX_SRC; i++) {
             t_ij->src[i] = tensor->src[i];
             if (tensor->src[i] == tensor) {
                 t_ij->src[i] = t_ij;
             } else if (t_ij->src[i] != nullptr && ggml_backend_buffer_is_meta(t_ij->src[i]->buffer)) {
                 t_ij->src[i] = ggml_backend_meta_buffer_simple_tensor(tensor->src[i], j);
+            }
+        }
+        if (simple_buf != nullptr) {
+            const enum ggml_status status = ggml_backend_buffer_init_tensor(simple_buf, t_ij);
+            if (status != GGML_STATUS_SUCCESS) {
+                return status;
             }
         }
 
