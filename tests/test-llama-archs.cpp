@@ -9,6 +9,7 @@
 
 // TODO: replace with #include "llama-ext.h" in the future
 #include "../src/llama-arch.h"
+#include "../src/llama-context.h"
 #include "../src/llama-model-saver.h"
 
 #include <cinttypes>
@@ -274,7 +275,7 @@ static bool silent_model_load_progress(float /*progress*/, void * /*user_data*/)
 
 static std::pair<llama_model_ptr, llama_context_ptr> get_model_and_ctx(
         struct gguf_context * gguf_ctx, FILE * file, const size_t seed, const std::vector<ggml_backend_dev_t> & devs,
-        const llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER, bool encode = false) {
+        const llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER, bool encode = false, bool no_alloc = false) {
     GGML_ASSERT((gguf_ctx == nullptr) != (file == nullptr));
     llama_model_params model_params = llama_model_default_params();
     model_params.progress_callback = silent_model_load_progress;
@@ -282,6 +283,7 @@ static std::pair<llama_model_ptr, llama_context_ptr> get_model_and_ctx(
     devs_copy.push_back(nullptr);
     model_params.devices = devs_copy.data();
     model_params.split_mode = split_mode;
+    model_params.no_alloc = no_alloc;
 
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = 0;
@@ -301,6 +303,9 @@ static std::pair<llama_model_ptr, llama_context_ptr> get_model_and_ctx(
     llama_context_ptr lctx(llama_init_from_model(model.get(), ctx_params));
     if (!lctx) {
         throw std::runtime_error("failed to create llama context");
+    }
+    if (devs.empty()) {
+        GGML_ASSERT(lctx->uses_compute_arenas() != no_alloc);
     }
     return std::make_pair(std::move(model), std::move(lctx));
 }
@@ -534,6 +539,13 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
     }, &ud);
 
     const std::vector<llama_token> tokens = get_tokens(128, 128, seed);
+
+    if (target_arch == LLM_ARCH_UNKNOWN || target_arch == LLM_ARCH_LLAMA) {
+        gguf_context_ptr gguf_ctx = get_gguf_ctx(LLM_ARCH_LLAMA, false);
+        auto model_and_ctx = get_model_and_ctx(
+            gguf_ctx.get(), nullptr, seed, {}, LLAMA_SPLIT_MODE_LAYER, false, true);
+        GGML_ASSERT(!model_and_ctx.second->uses_compute_arenas());
+    }
 
     struct device_config {
         std::vector<ggml_backend_dev_t> devs;
