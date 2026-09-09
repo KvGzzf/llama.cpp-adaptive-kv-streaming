@@ -355,7 +355,7 @@ private:
     std::vector<llama_compute_arena_binding> compute_arenas;
     ggml_backend_sched_ptr sched;
 
-    bool sched_need_reserve = true;
+    llama_compute_reserve_state sched_reserve_state;
 
     // training
     ggml_opt_context_t opt_ctx = nullptr;
