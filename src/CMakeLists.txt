@@ -30,6 +30,8 @@ add_library(llama
             llama-kv-cache-msa.cpp
             llama-kv-cache-dsv4.cpp
             llama-memory.cpp
+            llama-memory-plan.cpp
+            llama-memory-plan.h
             llama-memory-requirements.cpp
             llama-memory-requirements.h
             llama-memory-hybrid.cpp
