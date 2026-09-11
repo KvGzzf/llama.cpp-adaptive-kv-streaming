@@ -30,6 +30,8 @@ add_library(llama
             llama-kv-cache-msa.cpp
             llama-kv-cache-dsv4.cpp
             llama-memory.cpp
+            llama-memory-transition.cpp
+            llama-memory-transition.h
             llama-memory-layout.cpp
             llama-memory-layout.h
             llama-memory-plan.cpp
