@@ -32,6 +32,8 @@ add_library(llama
             llama-kv-cache-msa.cpp
             llama-kv-cache-dsv4.cpp
             llama-memory.cpp
+            llama-kv-stream-config.cpp
+            llama-kv-stream-config.h
             llama-memory-executor.cpp
             llama-memory-executor.h
             llama-memory-executor-cuda.cpp
