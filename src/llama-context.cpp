@@ -501,6 +501,7 @@ llama_context::~llama_context() {
     ggml_opt_free(opt_ctx);
 
     // Release scheduler leases while the backend objects are still alive.
+    compute_memory.reset();
     sched.reset();
     compute_arenas.clear();
 }
@@ -605,6 +606,11 @@ bool llama_context::prepare_compute_arenas(
         return false;
     }
 
+    if (!cparams.pipeline_parallel && cparams.n_seq_max == 1 && llama_context_memory::supported(backend_ptrs)) {
+        compute_memory = llama_context_memory::create(sched.get(), backend_ptrs, groups);
+        return compute_memory != nullptr;
+    }
+
     return llama_prepare_compute_arena_bindings(
         sched.get(), backend_ptrs, groups, compute_arenas);
 }
@@ -617,6 +623,7 @@ void llama_context::sched_reserve() {
     LLAMA_LOG_INFO("%s: reserving ...\n", __func__);
 
     synchronize();
+    compute_memory.reset();
     sched.reset();
     compute_arenas.clear();
 
@@ -681,6 +688,7 @@ void llama_context::sched_reserve() {
             if (cparams.pipeline_parallel) {
                 LLAMA_LOG_WARN("%s: compute buffer allocation failed, retrying without pipeline parallelism\n", __func__);
                 cparams.pipeline_parallel = false;
+                compute_memory.reset();
                 sched.reset();
                 compute_arenas.clear();
                 sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, false, cparams.op_offload));
@@ -758,7 +766,11 @@ void llama_context::synchronize() {
         return;
     }
 
-    ggml_backend_sched_synchronize(sched.get());
+    if (compute_memory) {
+        compute_memory->synchronize();
+    } else {
+        ggml_backend_sched_synchronize(sched.get());
+    }
 
     // FIXME: if multiple single tokens are evaluated without a synchronization,
     // the stats will be added to the prompt evaluation stats
@@ -799,8 +811,13 @@ ggml_backend_sched_t llama_context::get_sched() const {
     return sched.get();
 }
 
+// This reports the coordinated path separately from the legacy arena fallback.
+bool llama_context::uses_memory_coordinator() const {
+    return compute_memory != nullptr;
+}
+
 bool llama_context::uses_compute_arenas() const {
-    return !compute_arenas.empty();
+    return !compute_arenas.empty() || (compute_memory && compute_memory->uses_arenas());
 }
 
 uint32_t llama_context::n_ctx() const {
@@ -2545,8 +2562,11 @@ ggml_status llama_context::graph_compute(
         set_n_threads_fn.second(set_n_threads_fn.first, n_threads);
     }
 
-    auto status = ggml_backend_sched_graph_compute_async(sched.get(), gf);
+    auto status = compute_memory ? compute_memory->compute_async(gf) :
+        ggml_backend_sched_graph_compute_async(sched.get(), gf);
     if (status != GGML_STATUS_SUCCESS) {
+        // A partial/aborted dispatch keeps its guard closed; recreate it before another request.
+        if (compute_memory) sched_reserve_state.invalidate();
         LLAMA_LOG_ERROR("%s: ggml_backend_sched_graph_compute_async failed with error %d\n", __func__, status);
     }
 
