@@ -12,6 +12,7 @@ struct llama_cparams;
 struct llama_hparams;
 struct llama_model;
 struct llama_context;
+class llama_kv_stream_model;
 
 //
 // llama_kv_cache
@@ -112,9 +113,12 @@ public:
                llama_memory_t   mem_other,
         const layer_filter_cb & filter,
         const  layer_reuse_cb & reuse,
-        const  layer_share_cb & share);
+        const  layer_share_cb & share,
+        const llama_memory_params * stream = nullptr);
 
-    ~llama_kv_cache() = default;
+    ~llama_kv_cache();
+    llama_kv_stream_model * get_kv_stream() const noexcept { return kv_stream.get(); }
+    bool kv_stream_can_remove(llama_seq_id seq_id, llama_pos p0, llama_pos p1) const;
 
     //
     // llama_memory_i
@@ -235,6 +239,7 @@ private:
         std::vector<ggml_tensor *> v_stream;
     };
 
+    std::unique_ptr<llama_kv_stream_model> kv_stream;
     bool v_trans = true;  // the value tensor is transposed
 
     const uint32_t n_seq_max = 1;
@@ -365,6 +370,7 @@ public:
     //
 
     uint32_t get_n_kv() const;
+    bool kv_stream_begin(const llama_ubatch & ubatch, bool decode) const;
 
     ggml_type type_k() const;
     ggml_type type_v() const;
