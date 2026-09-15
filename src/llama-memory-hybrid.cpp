@@ -215,11 +215,15 @@ void llama_memory_hybrid::state_write(llama_io_write_i & io, llama_seq_id seq_id
 }
 
 void llama_memory_hybrid::state_read(llama_io_read_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) {
-    if (mem_attn->get_kv_stream()) throw std::runtime_error("KV streaming does not yet support state restoration");
-    if ((flags & LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY) == 0) {
-        mem_attn->state_read(io, seq_id, flags);
+    try {
+        if ((flags & LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY) == 0) {
+            mem_attn->state_read(io, seq_id, flags);
+        }
+        mem_recr->state_read(io, seq_id, flags);
+    } catch (...) {
+        if (mem_attn->get_kv_stream()) clear(true);
+        throw;
     }
-    mem_recr->state_read(io, seq_id, flags);
 }
 
 llama_kv_cache * llama_memory_hybrid::get_mem_attn() const {
