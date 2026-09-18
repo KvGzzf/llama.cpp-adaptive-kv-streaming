@@ -1884,6 +1884,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
     sched_reserve();
 
     if (cparams.kv_stream_pool_bytes && compute_memory) {
+        const auto transitions = compute_memory->phase_transition_count();
         const auto phase_result = compute_memory->signal_text_phase({
             text_phase,
             n_tokens_all,
@@ -1894,8 +1895,21 @@ int llama_context::decode(const llama_batch & batch_inp) {
         });
         if (phase_result.status != llama_memory_text_phase_status::changed &&
                 phase_result.status != llama_memory_text_phase_status::unchanged) {
-            LLAMA_LOG_ERROR("%s: rejected unsupported text phase signal\n", __func__);
+            LLAMA_LOG_ERROR("%s: rejected text phase transition\n", __func__);
             return -2;
+        }
+        if (compute_memory->phase_transition_count() != transitions) {
+            auto reserve_context = memory->init_full();
+            const uint32_t reserve_tokens = text_phase == llama_memory_text_phase::decode ?
+                cparams.n_seq_max : std::min(cparams.n_ctx,cparams.n_ubatch);
+            const uint32_t reserve_outputs = text_phase == llama_memory_text_phase::decode ?
+                cparams.n_seq_max : std::min(reserve_tokens,cparams.n_outputs_max);
+            if (!reserve_context || !graph_reserve(
+                    reserve_tokens,cparams.n_seq_max,reserve_outputs,
+                    reserve_context.get())) {
+                LLAMA_LOG_ERROR("%s: failed to reserve graph after text phase transition\n",__func__);
+                return -2;
+            }
         }
     }
 
