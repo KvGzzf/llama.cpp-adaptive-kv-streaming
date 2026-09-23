@@ -73,6 +73,8 @@ add_library(llama
             llama-memory-budget.h
             llama-memory-phase.cpp
             llama-memory-phase.h
+            llama-memory-phase-owner.cpp
+            llama-memory-phase-owner.h
             llama-memory-plan.cpp
             llama-memory-plan.h
             llama-memory-requirements.cpp
@@ -82,6 +84,8 @@ add_library(llama
             llama-memory-recurrent.cpp
             llama-mmap.cpp
             llama-model-loader.cpp
+            llama-memory-recurrent-spill.cpp
+            llama-memory-recurrent-spill.h
             llama-model-saver.cpp
             llama-model.cpp
             llama-quant.cpp

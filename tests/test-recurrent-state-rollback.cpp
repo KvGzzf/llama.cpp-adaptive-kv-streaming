@@ -1,11 +1,16 @@
 #include "arg.h"
 #include "common.h"
 #include "llama.h"
+#include "../src/llama-memory-hybrid.h"
+#include "../src/llama-memory-recurrent-spill.h"
 
 #include <algorithm>
 #include <clocale>
+#include <cstdlib>
+#include <cstring>
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 static llama_context * make_ctx(const common_params & params, llama_model * model) {
@@ -67,9 +72,38 @@ int main(int argc, char ** argv) {
 
     llama_context * ctx_src = make_ctx(params, model);
     llama_context * ctx_dst = make_ctx(params, model);
+    llama_context * ctx_stock = nullptr;
+    if (const char * spill_env = std::getenv("LLAMA_RS_HOST_SPILL")) {
+        const std::string original(spill_env);
+#ifdef _WIN32
+        _putenv_s("LLAMA_RS_HOST_SPILL", "");
+#else
+        unsetenv("LLAMA_RS_HOST_SPILL");
+#endif
+        ctx_stock = make_ctx(params, model);
+#ifdef _WIN32
+        _putenv_s("LLAMA_RS_HOST_SPILL", original.c_str());
+#else
+        setenv("LLAMA_RS_HOST_SPILL", original.c_str(), 1);
+#endif
+        if (!ctx_stock) return 1;
+    }
     if (ctx_src == nullptr || ctx_dst == nullptr) {
         fprintf(stderr, "%s : failed to init contexts\n", __func__);
         return 1;
+    }
+
+    if (std::getenv("LLAMA_RS_HOST_SPILL")) {
+        auto * hybrid=static_cast<llama_memory_hybrid *>(llama_get_memory(ctx_src));
+        auto * recurrent=hybrid->get_mem_recr();
+        for (size_t layer=0;layer<recurrent->r_l.size();++layer) {
+            for (auto * tensor : {recurrent->r_l[layer],recurrent->s_l[layer]}) {
+                if (tensor && tensor->ne[1] != recurrent->size) {
+                    fprintf(stderr,"%s : recurrent device storage still contains rollback planes\n",__func__);
+                    return 1;
+                }
+            }
+        }
     }
 
     if (llama_n_rs_seq(ctx_src) == 0) {
@@ -109,6 +143,52 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "%s : failed to decode prompt\n", __func__);
         return 1;
     }
+    if (ctx_stock && !decode_tokens(ctx_stock, tokens, n_tokens)) {
+        fprintf(stderr,"%s : stock reference decode failed\n",__func__);
+        return 1;
+    }
+    if (ctx_stock) {
+        const float * spilled=llama_get_logits(ctx_src);
+        const float * stock=llama_get_logits(ctx_stock);
+        if (!spilled || !stock) return 1;
+        for (int token=0;token<n_vocab;++token) {
+            if (std::fabs(spilled[token]-stock[token]) > 1e-5f) {
+                fprintf(stderr,"%s : initial spilled/stock logit mismatch at token %d\n",__func__,token);
+                return 1;
+            }
+        }
+    }
+
+
+    if (std::getenv("LLAMA_RS_HOST_SPILL")) {
+        auto * hybrid=static_cast<llama_memory_hybrid *>(llama_get_memory(ctx_src));
+        auto * recurrent=hybrid->get_mem_recr();
+        if (!recurrent->complete_spill() || !recurrent->spill_bank()) {
+            fprintf(stderr,"%s : host spill did not publish\n",__func__);
+            return 1;
+        }
+        const auto generation=recurrent->spill_generation();
+        for (size_t layer=0;layer<recurrent->r_l.size();++layer) for (bool value : {false,true}) {
+            auto * tensor=value ? recurrent->s_l[layer] : recurrent->r_l[layer];
+            if (!tensor) continue;
+            const size_t row=ggml_row_size(tensor->type,tensor->ne[0]);
+            std::vector<uint8_t> stock(row);
+            for (uint32_t slot=1;slot<=n_rs_seq;++slot) {
+                const auto * captured=recurrent->spill_bank()->snapshot_data(layer,value,slot,generation);
+                if (!captured) {
+                    fprintf(stderr,"%s : missing host snapshot layer %zu slot %u\n",__func__,layer,slot);
+                    return 1;
+                }
+                auto * stock_cache=static_cast<llama_memory_hybrid *>(llama_get_memory(ctx_stock))->get_mem_recr();
+                ggml_backend_tensor_get(value ? stock_cache->s_l[layer] : stock_cache->r_l[layer],stock.data(),slot*recurrent->size*row,row);
+                if (std::memcmp(stock.data(),captured,row) != 0) {
+                    fprintf(stderr,"%s : host snapshot differs from stock layer %zu slot %u\n",__func__,layer,slot);
+                    return 1;
+                }
+            }
+        }
+    }
+
     if (!llama_memory_seq_rm(llama_get_memory(ctx_src), 0, rollback_pos, -1)) {
         fprintf(stderr, "%s : rollback failed\n", __func__);
         return 1;
@@ -220,5 +300,6 @@ int main(int argc, char ** argv) {
     llama_free(ctx_src);
     llama_free(ctx_dst);
     llama_free(ctx_dirty);
+    if (ctx_stock) llama_free(ctx_stock);
     return 0;
 }
