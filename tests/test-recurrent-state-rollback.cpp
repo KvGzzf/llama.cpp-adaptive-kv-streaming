@@ -17,6 +17,11 @@ static llama_context * make_ctx(const common_params & params, llama_model * mode
     auto cparams = common_context_params_to_llama(params);
     cparams.n_seq_max = 1;
     cparams.n_rs_seq  = 8;
+    if (const char * depth_env=std::getenv("LLAMA_RS_TEST_DEPTH")) {
+        const int depth=std::atoi(depth_env);
+        if (depth >= 3 && depth <= 32) cparams.n_rs_seq=uint32_t(depth);
+    }
+
     cparams.n_batch   = std::max(cparams.n_batch,  (uint32_t) (cparams.n_rs_seq + 1));
     cparams.n_ubatch  = std::max(cparams.n_ubatch, (uint32_t) (cparams.n_rs_seq + 1));
     return llama_init_from_model(model, cparams);
@@ -96,6 +101,11 @@ int main(int argc, char ** argv) {
     if (std::getenv("LLAMA_RS_HOST_SPILL")) {
         auto * hybrid=static_cast<llama_memory_hybrid *>(llama_get_memory(ctx_src));
         auto * recurrent=hybrid->get_mem_recr();
+        if (const char * staged=std::getenv("LLAMA_RS_STAGED_PUBLICATION")) {
+            if (std::strcmp(staged,"1") == 0 &&
+                    (!recurrent->spill_bank() || !recurrent->spill_bank()->staged_publication_enabled())) return 1;
+        }
+
         for (size_t layer=0;layer<recurrent->r_l.size();++layer) {
             for (auto * tensor : {recurrent->r_l[layer],recurrent->s_l[layer]}) {
                 if (tensor && tensor->ne[1] != recurrent->size) {
@@ -193,20 +203,58 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "%s : rollback failed\n", __func__);
         return 1;
     }
+    if (std::getenv("LLAMA_RS_HOST_SPILL")) {
+        const auto * recurrent=static_cast<llama_memory_hybrid *>(llama_get_memory(ctx_src))->get_mem_recr();
+        if (recurrent->rs_idx[0] != n_rollback) {
+            fprintf(stderr,"%s : rollback restored before the state was needed\n",__func__);
+            return 1;
+        }
+    }
+
 
     // Save the rolled-back state and restore it into a fresh context.
     common_prompt_checkpoint ckpt;
     ckpt.update_tgt(ctx_src, 0, 0);
     ckpt.load_tgt(ctx_dst, 0, 0);
+    if (std::getenv("LLAMA_RS_HOST_SPILL")) {
+        llama_context * ctx_device=make_ctx(params,model);
+        llama_context * ctx_device_ref=make_ctx(params,model);
+        if (!ctx_device || !ctx_device_ref ||
+                !decode_tokens(ctx_device,tokens,n_tokens) ||
+                !llama_memory_seq_rm(llama_get_memory(ctx_device),0,rollback_pos,-1)) {
+            fprintf(stderr,"%s : device checkpoint setup failed\n",__func__);
+            return 1;
+        }
+        common_prompt_checkpoint device_ckpt;
+        device_ckpt.update_tgt(ctx_device,0,LLAMA_STATE_SEQ_FLAGS_ON_DEVICE);
+        ckpt.load_tgt(ctx_device_ref,0,0);
+        if (!decode_one(ctx_device,tokens[rollback_pos],rollback_pos)) return 1;
+        device_ckpt.load_tgt(ctx_device,0,LLAMA_STATE_SEQ_FLAGS_ON_DEVICE);
+        if (!decode_one(ctx_device,tokens[rollback_pos],rollback_pos) ||
+                !decode_one(ctx_device_ref,tokens[rollback_pos],rollback_pos)) return 1;
+        const float * device_logits=llama_get_logits(ctx_device);
+        const float * reference_logits=llama_get_logits(ctx_device_ref);
+        if (!device_logits || !reference_logits) return 1;
+        for (int token=0;token<n_vocab;++token) {
+            if (std::fabs(device_logits[token]-reference_logits[token]) > 1e-5f) {
+                fprintf(stderr,"%s : device checkpoint replay mismatch at token %d\n",__func__,token);
+                return 1;
+            }
+        }
+        llama_free(ctx_device);
+        llama_free(ctx_device_ref);
+    }
+
 
     constexpr float eps = 1e-5f;
     std::vector<std::vector<float>> logits_src_replay(n_rollback);
     const auto replay_and_compare = [&](const char * mode) {
         for (uint32_t i = 0; i < n_rollback; ++i) {
             const llama_pos pos = rollback_pos + i;
-            if (!decode_one(ctx_src, tokens[pos], pos) ||
-                !decode_one(ctx_dst, tokens[pos], pos)) {
-                fprintf(stderr, "%s : %s replay failed at position %d\n", __func__, mode, pos);
+            const bool src_ok=decode_one(ctx_src,tokens[pos],pos);
+            const bool dst_ok=src_ok && decode_one(ctx_dst,tokens[pos],pos);
+            if (!src_ok || !dst_ok) {
+                fprintf(stderr, "%s : %s replay failed at position %d in %s\n", __func__, mode, pos,src_ok ? "destination" : "source");
                 return false;
             }
 
@@ -232,6 +280,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    const auto logits_initial_replay=logits_src_replay;
     if (!llama_memory_seq_rm(llama_get_memory(ctx_src), 0, rollback_pos, -1) ||
         !llama_memory_seq_rm(llama_get_memory(ctx_dst), 0, rollback_pos, -1)) {
         fprintf(stderr, "%s : partial rollback failed\n", __func__);
@@ -288,12 +337,36 @@ int main(int argc, char ** argv) {
         }
 
         for (int token = 0; token < n_vocab; ++token) {
-            if (std::fabs(logits_src_replay[i][token] - logits_dirty[token]) > eps) {
+            if (std::fabs(logits_initial_replay[i][token] - logits_dirty[token]) > eps) {
                 fprintf(stderr, "%s : dirty-ctx logits mismatch at position %d, token %d (%g != %g)\n",
-                        __func__, pos, token, (double) logits_src_replay[i][token], (double) logits_dirty[token]);
+                        __func__, pos, token, (double) logits_initial_replay[i][token], (double) logits_dirty[token]);
                 return 1;
             }
         }
+    }
+
+    if (ctx_stock) for (uint32_t rollback=0;rollback<=n_rs_seq;++rollback) {
+        llama_context * probe=make_ctx(params,model);
+        if (!probe) return 1;
+        llama_memory_clear(llama_get_memory(ctx_stock),true);
+        if (!decode_tokens(probe,tokens,n_tokens) ||
+                !decode_tokens(ctx_stock,tokens,n_tokens)) return 1;
+        const llama_pos position=rollback ? llama_pos(n_tokens-rollback) : llama_pos(n_tokens);
+        if (rollback && (!llama_memory_seq_rm(llama_get_memory(probe),0,position,-1) ||
+                !llama_memory_seq_rm(llama_get_memory(ctx_stock),0,position,-1))) return 1;
+        const llama_token token=position < llama_pos(tokens.size()) ? tokens[position] : tokens.back();
+        if (!decode_one(probe,token,position) ||
+                !decode_one(ctx_stock,token,position)) return 1;
+        const float * actual=llama_get_logits(probe);
+        const float * expected=llama_get_logits(ctx_stock);
+        if (!actual || !expected) return 1;
+        for (int i=0;i<n_vocab;++i) {
+            if (std::fabs(actual[i]-expected[i]) > 1e-5f) {
+                fprintf(stderr,"%s : rollback depth %u differs from stock at token %d\n",__func__,rollback,i);
+                return 1;
+            }
+        }
+        llama_free(probe);
     }
 
     fprintf(stderr, "%s : recurrent rollback checkpoint restored successfully\n", __func__);

@@ -261,6 +261,17 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
 
     llama_test(
         test-recurrent-state-rollback
+        NAME test-recurrent-staged-multilayer
+        LABEL main
+        ARGS -m "${MODEL_DIR}/qwen35-multi-recurrent.gguf" -ngl 0
+    )
+    set_tests_properties(test-recurrent-staged-multilayer PROPERTIES
+        FIXTURES_REQUIRED generate-models
+        ENVIRONMENT "LLAMA_RS_HOST_SPILL=1;LLAMA_RS_STAGED_PUBLICATION=1;LLAMA_RS_TEST_DEPTH=3"
+    )
+
+    llama_test(
+        test-recurrent-state-rollback
         NAME test-recurrent-state-rollback-nemotron-h
         LABEL main
         ARGS -m "${MODEL_DIR}/nemotron_h-dense.gguf"
