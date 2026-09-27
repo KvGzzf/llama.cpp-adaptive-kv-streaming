@@ -1009,6 +1009,12 @@ extern "C" {
     LLAMA_API void llama_set_causal_attn(struct llama_context * ctx, bool causal_attn);
     // Explicit request phase for the experimental KV consumer; a one-token prompt is not necessarily decode.
     LLAMA_API void llama_set_kv_stream_decode(struct llama_context * ctx, bool decode);
+    // Experimental serial MTP-on-adaptive-KV lease lifecycle. These are no-ops
+    // when the target did not reserve an auxiliary MTP cache. The caller must
+    // serialize target and draft execution and release before target rollback.
+    LLAMA_API bool llama_kv_stream_mtp_prepare(struct llama_context * ctx, uint32_t future_tokens);
+    LLAMA_API bool llama_kv_stream_mtp_release(struct llama_context * ctx);
+
 
     // Set whether the model is in warmup mode or not
     // If true, all model tensors are activated during llama_decode() to load and cache their weights.
