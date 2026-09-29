@@ -60,17 +60,9 @@ jobs:
           save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
 
       - name: Build with CMake
-        # TODO: Remove GGML_CUDA_CUB_3DOT2 flag once CCCL 3.2 is bundled within CTK and that CTK version is used in this project
         run: |
-          cmake -S . -B build -G Ninja \
-            -DLLAMA_FATAL_WARNINGS=ON \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CUDA_ARCHITECTURES=89-real \
-            -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined \
-            -DGGML_NATIVE=OFF \
-            -DGGML_CUDA=ON \
-            -DGGML_CUDA_CUB_3DOT2=ON
-          cmake --build build
+          cmake -S . -B build-v2 -DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-v2 --target llama-server -j
 
   hip:
     runs-on: ubuntu-22.04
