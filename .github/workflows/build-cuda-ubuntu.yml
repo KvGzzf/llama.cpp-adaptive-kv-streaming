@@ -45,15 +45,15 @@ jobs:
         id: checkout
         uses: actions/checkout@v4
 
-      - name: Mark Git directory as safe
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
       - name: Install dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
-          apt-get install -y cmake build-essential gcc-13 g++-13 ninja-build libgomp1 git libssl-dev pkg-config libcurl4-openssl-dev
+          apt-get install -y cmake build-essential gcc-13 g++-13 ninja-build libgomp1 git ccache libssl-dev pkg-config libcurl4-openssl-dev
+
+      - name: Mark Git directory as safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: ccache
         uses: ggml-org/ccache-action@v1.2.21
