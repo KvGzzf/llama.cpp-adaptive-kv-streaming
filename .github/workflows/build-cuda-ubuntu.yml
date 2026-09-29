@@ -52,6 +52,12 @@ jobs:
           apt-get update
           apt-get install -y cmake build-essential gcc-13 g++-13 ninja-build libgomp1 git ccache libssl-dev pkg-config libcurl4-openssl-dev
 
+      - name: Setup CUDA stubs
+        run: |
+          ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 || true
+          echo "/usr/local/cuda/lib64/stubs" > /etc/ld.so.conf.d/cuda-stubs.conf
+          ldconfig
+
       - name: Mark Git directory as safe
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
@@ -73,8 +79,8 @@ jobs:
             -DCMAKE_CXX_COMPILER=g++-13 \
             -DCMAKE_CUDA_HOST_COMPILER=g++-13 \
             -DCMAKE_CUDA_ARCHITECTURES="70;75;80;86;89;90" \
-            -DCMAKE_EXE_LINKER_FLAGS="-L/usr/local/cuda/lib64/stubs" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-L/usr/local/cuda/lib64/stubs" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -L/usr/local/cuda/lib64/stubs" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -L/usr/local/cuda/lib64/stubs" \
             -DGGML_CUDA=ON \
             -DGGML_CUDA_FA_ALL_QUANTS=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
