@@ -45,6 +45,9 @@ jobs:
         id: checkout
         uses: actions/checkout@v4
 
+      - name: Mark Git directory as safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Install dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -67,6 +70,7 @@ jobs:
             -DCMAKE_C_COMPILER=gcc-13 \
             -DCMAKE_CXX_COMPILER=g++-13 \
             -DCMAKE_CUDA_HOST_COMPILER=g++-13 \
+            -DCMAKE_CUDA_ARCHITECTURES="70;75;80;86;89;90" \
             -DGGML_CUDA=ON \
             -DGGML_CUDA_FA_ALL_QUANTS=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
