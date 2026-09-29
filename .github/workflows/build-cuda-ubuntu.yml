@@ -64,6 +64,14 @@ jobs:
           cmake -S . -B build-v2 -DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build build-v2 --target llama-server -j
 
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-server-cuda
+          path: |
+            build-v2/bin/llama-server
+            build-v2/llama-server
+
   hip:
     runs-on: ubuntu-22.04
     container: rocm/dev-ubuntu-22.04:6.1.2
@@ -95,6 +103,14 @@ jobs:
             -DGGML_HIP=ON
           cmake --build build --config Release -j $(nproc)
 
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-hip
+          path: |
+            build/bin/
+            build/llama-*
+
   musa:
     runs-on: ubuntu-22.04
     container: mthreads/musa:rc4.3.0-devel-ubuntu22.04-amd64
@@ -123,3 +139,11 @@ jobs:
           cmake -B build -S . \
             -DGGML_MUSA=ON
           time cmake --build build --config Release -j $(nproc)
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-musa
+          path: |
+            build/bin/
+            build/llama-*
