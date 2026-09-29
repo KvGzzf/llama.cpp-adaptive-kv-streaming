@@ -43,14 +43,14 @@ jobs:
     steps:
       - name: Clone
         id: checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Install dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt update
-          apt install -y cmake build-essential ninja-build libgomp1 git libssl-dev
+          apt-get update
+          apt-get install -y cmake build-essential ninja-build libgomp1 git libssl-dev
 
       - name: ccache
         uses: ggml-org/ccache-action@v1.2.21
@@ -61,13 +61,18 @@ jobs:
 
       - name: Build with CMake
         run: |
-          cmake -S . -B build-v2 -DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-v2 --target llama-server -j
+          cmake -S . -B build-v2 \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_CUDA=ON \
+            -DGGML_CUDA_FA_ALL_QUANTS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
+          cmake --build build-v2 --target llama-server -j 2
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: llama-server-cuda
-          path: |
-            build-v2/bin/llama-server
-            build-v2/llama-server
+          path: build-v2/bin/llama-server
