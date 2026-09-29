@@ -50,7 +50,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
-          apt-get install -y cmake build-essential ninja-build libgomp1 git libssl-dev
+          apt-get install -y cmake build-essential gcc-13 g++-13 ninja-build libgomp1 git libssl-dev pkg-config libcurl4-openssl-dev
 
       - name: ccache
         uses: ggml-org/ccache-action@v1.2.21
@@ -64,6 +64,9 @@ jobs:
           cmake -S . -B build-v2 \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=gcc-13 \
+            -DCMAKE_CXX_COMPILER=g++-13 \
+            -DCMAKE_CUDA_HOST_COMPILER=g++-13 \
             -DGGML_CUDA=ON \
             -DGGML_CUDA_FA_ALL_QUANTS=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
